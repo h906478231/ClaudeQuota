@@ -98,7 +98,7 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 			if acc.Plan != "" {
 				ui.Badge(c, acc.Plan)
 			}
-			if !acc.ServedAt.IsZero() && now.Sub(acc.ServedAt) < 30*time.Minute {
+			if acc.InUse {
 				// 唯一带颜色的徽章，其余账号信息一律灰色。
 				ui.Badge(c, "● 正在使用").
 					Background(t.Success.Alpha(0.14)).
