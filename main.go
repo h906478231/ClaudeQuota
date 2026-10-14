@@ -63,6 +63,13 @@ type app struct {
 
 	visible  atomic.Bool
 	quitting bool
+
+	// Dock 图标的状态，见 dock.go。dockShown 只在主线程改，别处要读，
+	// 所以是原子量；dockDrawn 是 Dock 上那只老虎灌到的百分比，-1 表示要重画；
+	// dockBadge 是当前角标，只在主线程动。
+	dockShown atomic.Bool
+	dockDrawn atomic.Int32
+	dockBadge string
 }
 
 // newApp 建一个带默认值的 app：默认盯最吃紧的账号、每 5 秒读一次。
@@ -76,6 +83,8 @@ func newApp() *app {
 	a.labelMode.Store(0)
 	a.menuAccount.Store(mostConstrainedChoice)
 	a.intervalIdx.Store(1)
+	a.dockShown.Store(true)
+	a.dockDrawn.Store(-1)
 	return a
 }
 
@@ -164,7 +173,8 @@ func pickAccount(accounts []accountQuota, choice int) *accountQuota {
 	return mostConstrained(accounts)
 }
 
-// applyTray 更新菜单栏上的数字、老虎头水位和悬停提示。任何 goroutine 都能调。
+// applyTray 更新菜单栏上的数字、老虎头水位和悬停提示，顺带 Dock 图标。
+// 任何 goroutine 都能调。
 func (a *app) applyTray() {
 	// 没有托盘（比如测试里直接驱动状态）就只更新数据，不碰界面。
 	if a.tray == nil {
@@ -179,6 +189,7 @@ func (a *app) applyTray() {
 			log.Println("菜单栏图标：", err)
 		}
 	}
+	a.applyDock(acc, mode)
 
 	accounts, failed := a.state()
 	switch {
@@ -304,6 +315,12 @@ func (a *app) trayMenu() *mygo.Menu {
 	}
 	items = append(items, &mygo.MenuItem{Label: "刷新间隔", Submenu: intervalItems})
 
+	dock := a.dockShown.Load()
+	items = append(items, mygo.Separator(), &mygo.MenuItem{
+		Label: check(dock, "在 Dock 显示"),
+		Click: func(*mygo.MenuItem, *mygo.Window) { a.setDockVisible(!dock) },
+	})
+
 	items = append(items, mygo.Separator(), &mygo.MenuItem{Role: mygo.RoleQuit})
 	return mygo.NewMenu(items)
 }
@@ -390,6 +407,9 @@ func (a *app) ready() {
 	})
 
 	a.tray.OnClick(a.toggle)
+	// 点 Dock 图标也把面板拉出来，和点菜单栏的老虎头一样。
+	mygo.App.OnActivate(func(bool) { a.show() })
+	mygo.App.Dock.SetMenu(a.dockMenu())
 	a.tray.OnRightClick(func() {
 		a.win.Hide()
 		// 只为这次弹出装上菜单，弹完撤掉，主键点击才能继续只是开合面板。
@@ -521,8 +541,8 @@ func main() {
 	a := newApp()
 
 	mygo.App.SetName("Claude 额度")
-	// 只在菜单栏待着，不占 Dock。
-	mygo.App.SetActivationPolicy(mygo.ActivationPolicyAccessory)
+	// 菜单栏和 Dock 都有图标；Dock 那个可以在右键菜单里收起。
+	mygo.App.SetActivationPolicy(mygo.ActivationPolicyRegular)
 	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.quitting = true })
 	mygo.App.WhenReady(a.ready)
 	if err := mygo.App.Run(); err != nil {
