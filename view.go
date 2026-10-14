@@ -281,7 +281,6 @@ func (a *app) accountSelect(c *ui.Context, t *ui.Theme, accounts []accountQuota)
 			Background(t.Background).
 			Border(1, t.Border)
 
-		item(mostConstrainedLabel)
 		item(currentLabel)
 		for i := 0; i < split; i++ {
 			item(accounts[i].Email)
@@ -304,8 +303,8 @@ func (a *app) accountSelect(c *ui.Context, t *ui.Theme, accounts []accountQuota)
 
 // accountOptions 是下拉里的全部可选项，顺序和列表一致。
 func (a *app) accountOptions(accounts []accountQuota) []string {
-	options := make([]string, 0, len(accounts)+2)
-	options = append(options, mostConstrainedLabel, currentLabel)
+	options := make([]string, 0, len(accounts)+1)
+	options = append(options, currentLabel)
 	for _, acc := range accounts {
 		options = append(options, acc.Email)
 	}
@@ -319,11 +318,7 @@ func (a *app) accountChoice() string {
 
 // chooseAccount 把下拉里选中的文字翻回内部选择。
 func (a *app) chooseAccount(choice string, accounts []accountQuota) {
-	switch choice {
-	case mostConstrainedLabel:
-		a.setMenuAccount(mostConstrainedChoice)
-		return
-	case currentLabel:
+	if choice == currentLabel {
 		a.setMenuAccount(currentChoice)
 		return
 	}

@@ -133,32 +133,6 @@ func currentAccountIndex(accounts []accountQuota) int {
 	return best
 }
 
-// mostConstrained 是离上限最近的那个账号：优先在还在更新的账号里挑，
-// 全都过期了才退一步看全部。
-func mostConstrained(accounts []accountQuota) *accountQuota {
-	now := time.Now()
-	pick := -1
-	for i := range accounts {
-		if accounts[i].stale(now) {
-			continue
-		}
-		if pick < 0 || accounts[i].peak() > accounts[pick].peak() {
-			pick = i
-		}
-	}
-	if pick < 0 {
-		for i := range accounts {
-			if pick < 0 || accounts[i].peak() > accounts[pick].peak() {
-				pick = i
-			}
-		}
-	}
-	if pick < 0 {
-		return nil
-	}
-	return &accounts[pick]
-}
-
 func (a accountQuota) weekly() *quotaWindow {
 	for i := range a.Windows {
 		if a.Windows[i].isWeekly() {
@@ -166,17 +140,6 @@ func (a accountQuota) weekly() *quotaWindow {
 		}
 	}
 	return nil
-}
-
-// peak 是这个账号最吃紧的一条，用来排「最吃紧的账号」。
-func (a accountQuota) peak() float64 {
-	peak := 0.0
-	for _, w := range a.Windows {
-		if w.Used > peak {
-			peak = w.Used
-		}
-	}
-	return peak
 }
 
 func (a accountQuota) mostUsed() *quotaWindow {

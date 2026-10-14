@@ -25,19 +25,11 @@ var intervalChoices = []struct {
 
 var labelModes = []string{"最吃紧", "两个", "5 小时", "每周"}
 
-// 账号选择的两个特殊档；>= 0 时是 accounts 里的具体下标。
-const (
-	// mostConstrainedChoice 跟着「离上限最近」的账号走：
-	// 哪个已用百分比最高就显示哪个，不用手动切换。
-	mostConstrainedChoice = -1
-	// currentChoice 跟着「最近在用」的账号走，也就是你正在用的那个。
-	currentChoice = -2
-)
+// currentChoice 是账号选择的特殊档，跟着「最近在用」的账号走，
+// 也就是你正在用的那个；>= 0 时是 accounts 里的具体下标。
+const currentChoice = -1
 
-const (
-	mostConstrainedLabel = "最吃紧的账号"
-	currentLabel         = "当前使用的账号"
-)
+const currentLabel = "当前使用的账号"
 
 // app 持有界面所显示的状态。跨 goroutine 读的字段走原子量或锁，
 // 其余只在主线程上动：托盘回调、菜单回调和视图。
@@ -58,7 +50,7 @@ type app struct {
 	intervalValue    string
 
 	labelMode   atomic.Int32 // labelModes 的下标
-	menuAccount atomic.Int32 // -1 表示「最吃紧的账号」，否则 accounts 的下标
+	menuAccount atomic.Int32 // currentChoice 表示「当前使用的账号」，否则 accounts 的下标
 	intervalIdx atomic.Int32 // intervalChoices 的下标
 
 	visible  atomic.Bool
@@ -72,16 +64,16 @@ type app struct {
 	dockBadge string
 }
 
-// newApp 建一个带默认值的 app：默认盯最吃紧的账号、每 5 秒读一次。
+// newApp 建一个带默认值的 app：默认盯当前使用的账号、每 5 秒读一次。
 // 默认值集中在这里，别散落在 main 里，否则换个入口构造就会走样。
 func newApp() *app {
 	a := &app{
 		labelModeValue:   0,
-		menuAccountValue: mostConstrainedLabel,
+		menuAccountValue: currentLabel,
 		intervalValue:    intervalChoices[1].Label,
 	}
 	a.labelMode.Store(0)
-	a.menuAccount.Store(mostConstrainedChoice)
+	a.menuAccount.Store(currentChoice)
 	a.intervalIdx.Store(1)
 	a.dockShown.Store(true)
 	a.dockDrawn.Store(-1)
@@ -155,7 +147,7 @@ func (a *app) selectedAccount() *accountQuota {
 }
 
 // pickAccount 按选择挑账号。下标 >= 0 是某个具体账号；
-// currentChoice 挑最近在用的那个；其余按最吃紧的挑。
+// 其余（currentChoice，或下标已经越界）都挑最近在用的那个。
 func pickAccount(accounts []accountQuota, choice int) *accountQuota {
 	if len(accounts) == 0 {
 		return nil
@@ -163,14 +155,11 @@ func pickAccount(accounts []accountQuota, choice int) *accountQuota {
 	if choice >= 0 && choice < len(accounts) {
 		return &accounts[choice]
 	}
-	if choice == currentChoice {
-		if idx := currentAccountIndex(accounts); idx >= 0 {
-			return &accounts[idx]
-		}
-		// 一条使用记录都没有时退回第一个，别让菜单栏空着。
-		return &accounts[0]
+	if idx := currentAccountIndex(accounts); idx >= 0 {
+		return &accounts[idx]
 	}
-	return mostConstrained(accounts)
+	// 一条使用记录都没有时退回第一个，别让菜单栏空着。
+	return &accounts[0]
 }
 
 // applyTray 更新菜单栏上的数字、老虎头水位和悬停提示，顺带 Dock 图标。
@@ -273,9 +262,8 @@ func (a *app) trayMenu() *mygo.Menu {
 		}
 	}
 
-	// 还能用的账号一个子菜单，两个特殊档排在最前。
+	// 还能用的账号一个子菜单，「当前使用的账号」排在最前。
 	usableItems := []*mygo.MenuItem{
-		choiceItem(mostConstrainedChoice, mostConstrainedLabel),
 		choiceItem(currentChoice, currentLabel),
 	}
 	for i := 0; i < split; i++ {
@@ -338,10 +326,7 @@ func (a *app) choiceLabel(choice int) string {
 	if choice >= 0 && choice < len(accounts) {
 		return accounts[choice].Email
 	}
-	if choice == currentChoice {
-		return currentLabel
-	}
-	return mostConstrainedLabel
+	return currentLabel
 }
 
 func (a *app) setLabelMode(index int) {
