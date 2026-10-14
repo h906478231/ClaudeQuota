@@ -238,7 +238,7 @@ func TestAcceptAdjustableInterval(t *testing.T) {
 	}
 }
 
-// TestAcceptAccountSelection 「最吃紧的账号」和指定账号都要切得动。
+// TestAcceptAccountSelection 「当前使用的账号」和指定账号都要切得动。
 func TestAcceptAccountSelection(t *testing.T) {
 	accounts := realAccounts(t)
 
@@ -247,30 +247,22 @@ func TestAcceptAccountSelection(t *testing.T) {
 	a.accounts = accounts
 	a.mu.Unlock()
 
-	// 默认是「最吃紧的账号」。
-	a.menuAccount.Store(-1)
-	if got := a.accountChoice(); got != mostConstrainedLabel {
-		t.Errorf("默认选择 = %q, 期望 %q", got, mostConstrainedLabel)
+	// 默认是「当前使用的账号」。
+	if got := a.accountChoice(); got != currentLabel {
+		t.Errorf("默认选择 = %q, 期望 %q", got, currentLabel)
 	}
 
 	acc := a.selectedAccount()
 	if acc == nil {
-		t.Fatal("自动模式没选出账号")
+		t.Fatal("默认档没选出账号")
 	}
-	// 自动模式应当在「不过期」的账号里挑百分比最高的那个。
-	now := time.Now()
-	best := -1.0
-	for _, candidate := range accounts {
-		if candidate.stale(now) {
-			continue
-		}
-		if candidate.peak() > best {
-			best = candidate.peak()
-		}
+	// 默认档应当挑最近在用的那个；一条使用记录都没有时退回第一个。
+	want := accounts[0].Email
+	if idx := currentAccountIndex(accounts); idx >= 0 {
+		want = accounts[idx].Email
 	}
-	if best >= 0 && acc.peak() != best {
-		t.Errorf("自动挑中的 %s 峰值 %.0f%%，但在更新的账号里最高是 %.0f%%",
-			acc.Email, acc.peak(), best)
+	if acc.Email != want {
+		t.Errorf("默认挑中的是 %s，期望最近在用的 %s", acc.Email, want)
 	}
 
 	// 逐个指定账号。
@@ -285,18 +277,18 @@ func TestAcceptAccountSelection(t *testing.T) {
 	}
 
 	// 从下拉框回来的字符串也要能映射回下标。
-	a.setMenuAccount(-1)
+	a.setMenuAccount(currentChoice)
 	a.chooseAccount(accounts[0].Email, accounts)
 	if got := a.accountChoice(); got != accounts[0].Email {
 		t.Errorf("按名字选择失败，得到 %q", got)
 	}
-	a.chooseAccount(mostConstrainedLabel, accounts)
-	if got := a.accountChoice(); got != mostConstrainedLabel {
-		t.Errorf("切回自动失败，得到 %q", got)
+	a.chooseAccount(currentLabel, accounts)
+	if got := a.accountChoice(); got != currentLabel {
+		t.Errorf("切回当前账号失败，得到 %q", got)
 	}
 	// 不认识的字符串不该把选择弄坏。
 	a.chooseAccount("nobody@example.com", accounts)
-	if got := a.accountChoice(); got != mostConstrainedLabel {
+	if got := a.accountChoice(); got != currentLabel {
 		t.Errorf("未知名字应当保持原选择，得到 %q", got)
 	}
 }
@@ -604,14 +596,14 @@ func TestAcceptPanelAccountSelect(t *testing.T) {
 	a, accounts := readyApp(t)
 	tt := ui.NewTester(a.view, 360, 520)
 
-	if got := a.accountChoice(); got != mostConstrainedLabel {
-		t.Fatalf("初始账号选择 = %q, 期望 %q", got, mostConstrainedLabel)
+	if got := a.accountChoice(); got != currentLabel {
+		t.Fatalf("初始账号选择 = %q, 期望 %q", got, currentLabel)
 	}
 
 	target := accounts[len(accounts)-1].Email
 
 	// 点开下拉（这一项的文字是唯一的），End 跳到最后一个账号，回车选中。
-	if err := tt.Click(mostConstrainedLabel); err != nil {
+	if err := tt.Click(currentLabel); err != nil {
 		t.Fatalf("点不开账号下拉：%v", err)
 	}
 	tt.Key(0, ui.KeyEnd)
@@ -624,12 +616,12 @@ func TestAcceptPanelAccountSelect(t *testing.T) {
 		t.Errorf("selectedAccount 没跟上")
 	}
 
-	// 焦点还在下拉上：方向键重新打开，Home 回到第一项「最吃紧的账号」。
+	// 焦点还在下拉上：方向键重新打开，Home 回到第一项「当前使用的账号」。
 	tt.Key(0, ui.KeyDown)
 	tt.Key(0, ui.KeyHome)
 	tt.Key(0, ui.KeyEnter)
-	if got := a.accountChoice(); got != mostConstrainedLabel {
-		t.Errorf("切回自动后 = %q, 期望 %q", got, mostConstrainedLabel)
+	if got := a.accountChoice(); got != currentLabel {
+		t.Errorf("切回当前账号后 = %q, 期望 %q", got, currentLabel)
 	}
 }
 
@@ -692,8 +684,8 @@ func TestAcceptTrayMenuGroupsFullAccounts(t *testing.T) {
 		split = len(accounts)
 	}
 
-	// 还能用的那个子菜单：前两项是两个特殊档，之后是能用的账号。
-	wantUsable := append([]string{mostConstrainedLabel, currentLabel}, emails(accounts[:split])...)
+	// 还能用的那个子菜单：第一项是「当前使用的账号」，之后是能用的账号。
+	wantUsable := append([]string{currentLabel}, emails(accounts[:split])...)
 	if got := submenuEmails(usable.Submenu); !slices.Equal(got, wantUsable) {
 		t.Errorf("「菜单栏账号」内容不对：\n  得到 %v\n  期望 %v", got, wantUsable)
 	}
@@ -737,7 +729,7 @@ func TestAcceptAccountDropdownGroupsFull(t *testing.T) {
 		t.Error("下拉还没展开，就已经有下拉里的分栏标题了")
 	}
 
-	if err := tt.Click(mostConstrainedLabel); err != nil {
+	if err := tt.Click(currentLabel); err != nil {
 		t.Fatalf("点不开监控账号下拉：%v", err)
 	}
 	if !tt.HasText("本周已用尽") {
@@ -797,10 +789,17 @@ func TestAcceptDropdownPicksCurrentAccount(t *testing.T) {
 		t.Logf("最近在用的正好是列表第一个 %s", want)
 	}
 
+	// 默认就是这一档，先切到别的账号，再从下拉里选回来。
 	tt := ui.NewTester(a.view, 360, 680)
-	if err := tt.Click(mostConstrainedLabel); err != nil {
+	if err := tt.Click(currentLabel); err != nil {
 		t.Fatalf("点不开监控账号下拉：%v", err)
 	}
+	tt.Key(0, ui.KeyEnd)
+	tt.Key(0, ui.KeyEnter)
+	if got := a.accountChoice(); got == currentLabel {
+		t.Fatal("没能先切到别的账号")
+	}
+	tt.Key(0, ui.KeyDown) // 焦点还在下拉上，方向键重新展开
 	if err := tt.Click(currentLabel); err != nil {
 		t.Fatalf("点不到「%s」：%v", currentLabel, err)
 	}
@@ -813,10 +812,4 @@ func TestAcceptDropdownPicksCurrentAccount(t *testing.T) {
 		t.Errorf("这一档没跟着最近在用的账号走：得到 %v, 期望 %s", acc, want)
 	}
 	t.Logf("「%s」-> %s", currentLabel, want)
-
-	// 两档要挑得出不同的账号，否则等于白加。
-	byConstrained := pickAccount(accounts, mostConstrainedChoice)
-	if byConstrained != nil && byConstrained.Email == want {
-		t.Logf("提示：这台机器上最近在用的账号恰好也是最吃紧的那个，两档结果相同")
-	}
 }

@@ -110,9 +110,6 @@ func TestLoadAccountsFields(t *testing.T) {
 	if w := fresh.weekly(); w == nil || w.Used != 59 {
 		t.Errorf("每周窗口读错了：%+v", w)
 	}
-	if fresh.peak() != 59 {
-		t.Errorf("peak = %v, 期望 59", fresh.peak())
-	}
 	if fresh.ServedAt.IsZero() {
 		t.Error("served.json 里的最近使用时间没读进来")
 	}
@@ -536,7 +533,8 @@ func TestAcceptNoDeletedAccounts(t *testing.T) {
 	t.Logf("显示的 %d 个账号全部在登记表里，无遗漏无残留", len(accounts))
 }
 
-// TestPickAccount 两个特殊档要挑对不同账号。
+// TestPickAccount 「当前使用的账号」挑最近在用的，不看谁已用得最多；
+// 下标越界时也退回这一档。
 func TestPickAccount(t *testing.T) {
 	now := time.Now()
 	accounts := []accountQuota{
@@ -550,9 +548,9 @@ func TestPickAccount(t *testing.T) {
 		choice int
 		want   string
 	}{
-		{"最吃紧挑已用最高的", mostConstrainedChoice, "tight@x.com"},
 		{"当前使用挑最近在用的", currentChoice, "active@x.com"},
-		{"按下标挑具体账号", 1, "active@x.com"},
+		{"按下标挑具体账号", 2, "tight@x.com"},
+		{"下标越界退回当前使用", 99, "active@x.com"},
 	}
 	for _, c := range cases {
 		got := pickAccount(accounts, c.choice)
