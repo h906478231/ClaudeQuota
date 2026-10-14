@@ -1,11 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"log"
 	"math"
 	"os"
@@ -168,7 +164,7 @@ func pickAccount(accounts []accountQuota, choice int) *accountQuota {
 	return mostConstrained(accounts)
 }
 
-// applyTray 更新菜单栏上的数字、圆环和悬停提示。任何 goroutine 都能调。
+// applyTray 更新菜单栏上的数字、老虎头水位和悬停提示。任何 goroutine 都能调。
 func (a *app) applyTray() {
 	// 没有托盘（比如测试里直接驱动状态）就只更新数据，不碰界面。
 	if a.tray == nil {
@@ -178,7 +174,7 @@ func (a *app) applyTray() {
 	acc := a.selectedAccount()
 
 	a.tray.SetTitle(menuBarTitle(acc, mode))
-	if icon := gaugeIcon(gaugeFraction(acc, mode)); icon != nil {
+	if icon := tigerIcon(gaugeFraction(acc, mode)); icon != nil {
 		if err := a.tray.SetIcon(icon, true); err != nil {
 			log.Println("菜单栏图标：", err)
 		}
@@ -353,7 +349,7 @@ func (a *app) setInterval(index int) {
 func (a *app) ready() {
 	var err error
 	a.tray, err = mygo.NewTray(mygo.TrayOptions{
-		Icon:           gaugeIcon(0),
+		Icon:           tigerIcon(0),
 		IconIsTemplate: true,
 		ToolTip:        "Claude 套餐额度",
 	})
@@ -519,43 +515,6 @@ func tooltip(acc *accountQuota, mode int, total int) string {
 		text += fmt.Sprintf("（共 %d 个账号）", total)
 	}
 	return text
-}
-
-// gaugeIcon 画一个圆环，已用的部分填实，作模板图交给 macOS 上色。
-func gaugeIcon(fraction float64) []byte {
-	const size = 32
-	const rOuter, rInner = 15.0, 9.5
-
-	img := image.NewNRGBA(image.Rect(0, 0, size, size))
-	cx, cy := float64(size)/2, float64(size)/2
-	start := -math.Pi / 2 // 从 12 点方向顺时针填
-	sweep := 2 * math.Pi * math.Min(1, math.Max(0, fraction))
-
-	for y := range size {
-		for x := range size {
-			dx := float64(x) + 0.5 - cx
-			dy := float64(y) + 0.5 - cy
-			if r := math.Hypot(dx, dy); r < rInner || r > rOuter {
-				continue
-			}
-			rel := math.Atan2(dy, dx) - start
-			for rel < 0 {
-				rel += 2 * math.Pi
-			}
-			alpha := uint8(64) // 空环淡一点，看得出总刻度
-			if rel <= sweep {
-				alpha = 255
-			}
-			img.SetNRGBA(x, y, color.NRGBA{R: 255, G: 255, B: 255, A: alpha})
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		log.Println("生成菜单栏图标：", err)
-		return nil
-	}
-	return buf.Bytes()
 }
 
 func main() {
