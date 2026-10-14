@@ -1,0 +1,6 @@
+{
+  "name": "ClaudeQuota",
+  "identifier": "local.claudequota",
+  "version": "1.0.0",
+  "out": "build"
+}
