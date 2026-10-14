@@ -32,7 +32,7 @@ const (
 
 var labelModes = []string{"两个", "5 小时", "每周"}
 
-// currentChoice 是账号选择的特殊档，跟着「最近在用」的账号走，
+// currentChoice 是账号选择的特殊档，跟着 magpie 认定「正在使用」的账号走，
 // 也就是你正在用的那个；>= 0 时是 accounts 里的具体下标。
 const currentChoice = -1
 
@@ -96,7 +96,7 @@ func (a *app) state() ([]accountQuota, string) {
 // refresh 重新读一遍 magpie 的额度文件。读的是本地文件，很便宜。
 func (a *app) refresh() {
 	accounts, err := loadAccounts()
-	// 存的就是界面要的顺序：最近在用的在前，其余按周剩余升序，
+	// 存的就是界面要的顺序：正在使用的在前，其余按周剩余升序，
 	// 用尽的沉底。这样下拉框、托盘菜单和列表三处的顺序天然一致。
 	orderAccounts(accounts)
 
@@ -154,7 +154,7 @@ func (a *app) selectedAccount() *accountQuota {
 }
 
 // pickAccount 按选择挑账号。下标 >= 0 是某个具体账号；
-// 其余（currentChoice，或下标已经越界）都挑最近在用的那个。
+// 其余（currentChoice，或下标已经越界）都挑正在使用的那个。
 func pickAccount(accounts []accountQuota, choice int) *accountQuota {
 	if len(accounts) == 0 {
 		return nil

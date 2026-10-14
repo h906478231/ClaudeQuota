@@ -110,6 +110,8 @@ type accountQuota struct {
 	ReadAt    time.Time
 	ServedAt  time.Time
 	HadReadAt bool
+	// InUse 是 magpie 认定的「正在使用」的那一个，同一时刻最多一个，见 markInUse。
+	InUse bool
 }
 
 func (a accountQuota) session() *quotaWindow {
@@ -121,16 +123,15 @@ func (a accountQuota) session() *quotaWindow {
 	return nil
 }
 
-// currentAccountIndex 是最近被用到的那个账号的下标，
-// 没有任何使用记录时返回 -1。
+// currentAccountIndex 是 magpie 认定正在使用的那个账号的下标，
+// magpie 说不出来时返回 -1。
 func currentAccountIndex(accounts []accountQuota) int {
-	best, bestAt := -1, time.Time{}
 	for i, acc := range accounts {
-		if acc.ServedAt.After(bestAt) {
-			best, bestAt = i, acc.ServedAt
+		if acc.InUse {
+			return i
 		}
 	}
-	return best
+	return -1
 }
 
 func (a accountQuota) weekly() *quotaWindow {
@@ -190,7 +191,7 @@ func resetBefore(left, right time.Time) bool {
 }
 
 // orderAccounts 就地排成界面要的顺序：
-// 还能用的账号在前，其中最近在用的排第一，其余按周额度剩余升序
+// 还能用的账号在前，其中正在使用的排第一，其余按周额度剩余升序
 // （快用满的靠前）；本周已经用完的整组沉到最后。
 func orderAccounts(accounts []accountQuota) {
 	sort.SliceStable(accounts, func(i, j int) bool {
@@ -209,7 +210,7 @@ func orderAccounts(accounts []accountQuota) {
 		return left.ReadAt.After(right.ReadAt)
 	})
 
-	// 最近在用的那一个提到最前面。
+	// 正在使用的那一个提到最前面。
 	if best := currentAccountIndex(accounts); best > 0 {
 		current := accounts[best]
 		copy(accounts[1:best+1], accounts[0:best])
@@ -248,8 +249,9 @@ func loadAccountsFrom(dir string) ([]accountQuota, error) {
 	}
 
 	served := loadServed(dir)
+	logins := readLogins(dir, "claude")
 	// 登记表读不到时留空，那就不过滤 —— 宁可多显示，也别把整份数据清空。
-	live := loadLogins(dir, "claude")
+	live := liveSet(logins)
 
 	var out []accountQuota
 	for key, entry := range raw {
@@ -272,7 +274,7 @@ func loadAccountsFrom(dir string) ([]accountQuota, error) {
 		acc := accountQuota{
 			Email:    email,
 			Plan:     entry.Quota.Plan,
-			ServedAt: served[email],
+			ServedAt: served[strings.ToLower(email)],
 		}
 		for _, w := range entry.Quota.Windows {
 			acc.Windows = append(acc.Windows, quotaWindow{
@@ -303,37 +305,232 @@ func loadAccountsFrom(dir string) ([]accountQuota, error) {
 		}
 		return out[i].Email < out[j].Email
 	})
+	markInUse(out, logins, signedInClaude(), time.Now())
 	return out, nil
 }
 
-// loadLogins 读 magpie 的账号登记表，返回某个 agent 名下还存在的账号。
-//
-// 这张表才是「活着」的账号集合：magpie 删号时不会顺手清掉 quotas.json
-// 里的额度快照，那些记录会一直躺着，照单全收就会把早删掉的账号也显示出来。
-// 读不到表时返回空集，调用方据此放弃过滤，宁可多显示也别整个空掉。
-func loadLogins(dir, agent string) map[string]bool {
+// loginRecord 是 magpie 账号登记表（logins.json）里一条账号用得上的部分。
+// 那张表里还存着各账号的凭据，我们一概不读。
+type loginRecord struct {
+	Agent  string `json:"agent"`
+	User   string `json:"user"`
+	On     bool   `json:"on"`     // 轮到它接班：正在用的那个用完后请求转给它
+	Paused bool   `json:"paused"` // 用户在 magpie 里暂停了正在登录的这个
+	Held   bool   `json:"held"`   // magpie 上次看时 Claude Code 登录的就是它
+	Lapsed string `json:"lapsed"` // 登录失效了，得重新登录才能用
+}
+
+// readLogins 读 magpie 的账号登记表，按文件里的顺序返回某个 agent 名下的账号。
+// 读不到表时返回 nil。
+func readLogins(dir, agent string) []loginRecord {
 	data, err := os.ReadFile(filepath.Join(dir, "logins.json"))
 	if err != nil {
 		return nil
 	}
-	var records []struct {
-		Agent string `json:"agent"`
-		User  string `json:"user"`
-	}
+	var records []loginRecord
 	if err := json.Unmarshal(data, &records); err != nil {
 		return nil
 	}
-
-	out := map[string]bool{}
+	var out []loginRecord
 	for _, record := range records {
 		if record.Agent == agent && record.User != "" {
-			out[record.User] = true
+			out = append(out, record)
 		}
 	}
 	return out
 }
 
-// loadServed 读 magpie 记录的各账号最近被用到的时刻。
+// loadLogins 返回某个 agent 名下还存在的账号。
+//
+// 这张表才是「活着」的账号集合：magpie 删号时不会顺手清掉 quotas.json
+// 里的额度快照，那些记录会一直躺着，照单全收就会把早删掉的账号也显示出来。
+// 读不到表时返回空集，调用方据此放弃过滤，宁可多显示也别整个空掉。
+func loadLogins(dir, agent string) map[string]bool {
+	return liveSet(readLogins(dir, agent))
+}
+
+func liveSet(records []loginRecord) map[string]bool {
+	if records == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, record := range records {
+		out[record.User] = true
+	}
+	return out
+}
+
+// ---------- 正在使用的账号 ----------
+//
+// 跟 magpie 自己菜单栏上「正在使用的账号」用同一套规则（magpie 的
+// internal/gui/trayusage.go 里的 trayInUseCard 和 provider.InUseLogin）：
+//
+//  1. 一小时内经网关回答过请求的账号里，最近的那一个；
+//  2. 否则是 Claude Code 当前登录的账号 —— 被暂停了就换下一个接班的，
+//     额度已用尽而另有接班账号还有余量时也换过去；
+//  3. 否则是最后回答过请求的那个，不管多久以前。
+//
+// 同一时刻只有一个。以前是「半小时内用过的都算在用」，magpie 换号后旧号
+// 还会挂着「正在使用」，好几个账号同时亮。
+
+// servedFresh 是 magpie 认「刚用过」的时限，和它的 trayServedFresh 一致。
+const servedFresh = time.Hour
+
+// spentShare 是 magpie 认为一个账号额度已用尽的比例（它的 SpentShare）。
+const spentShare = 98
+
+// markInUse 把 accounts 里正在使用的那一个标上 InUse，其余清掉。
+// logins 是 magpie 登记表里的 Claude 账号，signedIn 是 Claude Code 当前登录的账号。
+func markInUse(accounts []accountQuota, logins []loginRecord, signedIn string, now time.Time) {
+	for i := range accounts {
+		accounts[i].InUse = false
+	}
+	if idx := inUseIndex(accounts, logins, signedIn, now); idx >= 0 {
+		accounts[idx].InUse = true
+	}
+}
+
+func inUseIndex(accounts []accountQuota, logins []loginRecord, signedIn string, now time.Time) int {
+	if len(accounts) == 0 {
+		return -1
+	}
+	if len(accounts) == 1 {
+		return 0
+	}
+	last := -1
+	for i, acc := range accounts {
+		if !acc.ServedAt.IsZero() && (last < 0 || acc.ServedAt.After(accounts[last].ServedAt)) {
+			last = i
+		}
+	}
+	if last >= 0 && now.Sub(accounts[last].ServedAt) < servedFresh {
+		return last
+	}
+	if user := inUseLogin(logins, signedIn, accountRoom(accounts, now)); user != "" {
+		for i, acc := range accounts {
+			if sameUser(acc.Email, user) {
+				return i
+			}
+		}
+	}
+	return last
+}
+
+// accountRoom 说某个账号的额度是否已知、是否已用尽。
+// 读不到的账号算「不知道」，绝不当作用尽。
+func accountRoom(accounts []accountQuota, now time.Time) func(user string) (known, spent bool) {
+	return func(user string) (bool, bool) {
+		for _, acc := range accounts {
+			if !sameUser(acc.Email, user) {
+				continue
+			}
+			for _, w := range acc.Windows {
+				// 已经过了重置时间的窗口在 magpie 那边是空的。
+				if w.Used >= spentShare && (w.ResetsAt.IsZero() || w.ResetsAt.After(now)) {
+					return true, true
+				}
+			}
+			return true, false
+		}
+		return false, false
+	}
+}
+
+// inUseLogin 是 magpie 网关最先把请求发给的那个账号（它的 InUseLogin）：
+// Claude Code 登录着的那个，除非它被暂停，或者额度用尽而另有接班的还有余量；
+// 否则是第一个接班的。登记表里没有时返回空串。
+func inUseLogin(logins []loginRecord, signedIn string, room func(user string) (known, spent bool)) string {
+	if signedIn == "" {
+		// 读不到 Claude Code 的登录信息时，用 magpie 上次看到的那个。
+		for _, l := range logins {
+			if l.Held {
+				signedIn = l.User
+				break
+			}
+		}
+	}
+	active := func(l loginRecord) bool { return signedIn != "" && sameUser(l.User, signedIn) }
+	othersOn := func(user string) bool {
+		for _, l := range logins {
+			if l.On && !sameUser(l.User, user) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, l := range logins {
+		if !active(l) {
+			continue
+		}
+		// 暂停只在另有账号接班时才生效，不然请求照旧发给它。
+		if l.Paused && othersOn(l.User) {
+			break
+		}
+		if known, spent := room(l.User); known && spent {
+			for _, next := range logins {
+				if !next.On || next.Lapsed != "" || active(next) {
+					continue
+				}
+				if known, spent := room(next.User); known && !spent {
+					return next.User
+				}
+			}
+		}
+		return l.User
+	}
+	for _, l := range logins {
+		if (l.On || active(l)) && !(active(l) && l.Paused) {
+			return l.User
+		}
+	}
+	return ""
+}
+
+// sameUser 比较两个账号名：不分大小写；团队账号在 magpie 里叫
+// 「邮箱 · 组织」，只比邮箱那一段。
+func sameUser(a, b string) bool {
+	a, _, _ = strings.Cut(a, " · ")
+	b, _, _ = strings.Cut(b, " · ")
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+// claudeProfilePath 是 Claude Code 存登录账号的文件，和 magpie 找的是同一个。
+// 测试里换掉。
+var claudeProfilePath = func() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, ".claude.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude.json")
+}
+
+// signedInClaude 是 Claude Code 当前登录的账号邮箱，读不到时返回空串。
+// 只取 oauthAccount 里的邮箱，不碰凭据。
+func signedInClaude() string {
+	path := claudeProfilePath()
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var profile struct {
+		OAuthAccount struct {
+			EmailAddress string `json:"emailAddress"`
+		} `json:"oauthAccount"`
+	}
+	if json.Unmarshal(data, &profile) != nil {
+		return ""
+	}
+	return strings.TrimSpace(profile.OAuthAccount.EmailAddress)
+}
+
+// loadServed 读 magpie 记录的各账号最近经网关回答请求的时刻，键是小写邮箱。
 func loadServed(dir string) map[string]time.Time {
 	out := map[string]time.Time{}
 	data, err := os.ReadFile(filepath.Join(dir, "served.json"))
@@ -349,8 +546,9 @@ func loadServed(dir string) map[string]time.Time {
 		if !ok {
 			continue
 		}
+		// magpie 记的键是小写的，查的时候也按小写查。
 		if t := parseTime(value); !t.IsZero() {
-			out[email] = t
+			out[strings.ToLower(email)] = t
 		}
 	}
 	return out

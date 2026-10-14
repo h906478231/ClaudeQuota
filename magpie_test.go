@@ -340,6 +340,7 @@ func TestLiveMagpie(t *testing.T) {
 
 // ---------- 排序与分组 ----------
 
+// weeklyAccount 造一个账号；servedAt 非零时把它当作正在使用的那个。
 func weeklyAccount(email string, weekly float64, resetIn time.Duration, readAt, servedAt time.Time) accountQuota {
 	w := quotaWindow{Name: "7 days", Used: weekly}
 	if resetIn != 0 {
@@ -350,6 +351,7 @@ func weeklyAccount(email string, weekly float64, resetIn time.Duration, readAt, 
 		Plan:     "pro",
 		ReadAt:   readAt,
 		ServedAt: servedAt,
+		InUse:    !servedAt.IsZero(),
 		Windows: []quotaWindow{
 			{Name: "5 hours", Used: 0},
 			w,
@@ -435,15 +437,10 @@ func TestAcceptStoredOrder(t *testing.T) {
 		}
 	}
 
-	// 最近在用的那个（如果有）必须排在最前。
-	best, bestAt := -1, time.Time{}
-	for i, acc := range accounts {
-		if acc.ServedAt.After(bestAt) {
-			best, bestAt = i, acc.ServedAt
-		}
-	}
-	if !bestAt.IsZero() && best != 0 {
-		t.Errorf("最近在用的 %s 排在第 %d 位，应当在第 0 位", accounts[best].Email, best)
+	// 正在使用的那个（如果有）必须排在最前。
+	best := currentAccountIndex(accounts)
+	if best > 0 {
+		t.Errorf("正在使用的 %s 排在第 %d 位，应当在第 0 位", accounts[best].Email, best)
 	}
 
 	// 除开排第一的那个「最近在用」，其余还能用的账号周剩余必须单调不减。
@@ -452,7 +449,7 @@ func TestAcceptStoredOrder(t *testing.T) {
 		split = len(accounts)
 	}
 	start := 0
-	if !bestAt.IsZero() {
+	if best == 0 {
 		start = 1 // 第 0 位是被提到最前的在用账号，不参与这段排序
 	}
 	for i := start + 1; i < split; i++ {
@@ -539,8 +536,10 @@ func TestAcceptNoDeletedAccounts(t *testing.T) {
 // 下标越界时也退回这一档。
 func TestPickAccount(t *testing.T) {
 	now := time.Now()
+	busy := weeklyAccount("busy@x.com", 70, 0, now, now.Add(-2*time.Hour)) // 用过，但不是最近
+	busy.InUse = false
 	accounts := []accountQuota{
-		weeklyAccount("busy@x.com", 70, 0, now, now.Add(-2*time.Hour)),   // 用过，但不是最近
+		busy,
 		weeklyAccount("active@x.com", 10, 0, now, now.Add(-time.Minute)), // 最近在用
 		weeklyAccount("tight@x.com", 95, 0, now, time.Time{}),            // 已用最高
 	}
