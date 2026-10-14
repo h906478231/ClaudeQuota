@@ -151,7 +151,7 @@ func TestAcceptFreshnessOrdering(t *testing.T) {
 	}
 }
 
-// TestAcceptMenuBarModes 四档显示都要能出东西，格式要对。
+// TestAcceptMenuBarModes 每档显示都要能出东西，格式要对。
 func TestAcceptMenuBarModes(t *testing.T) {
 	acc := realAccounts(t)[0]
 
@@ -523,8 +523,8 @@ func TestAcceptPanelShowsNumbers(t *testing.T) {
 func TestAcceptPanelSwitchesLabelMode(t *testing.T) {
 	a, _ := readyApp(t)
 
-	if got := int(a.labelMode.Load()); got != 0 {
-		t.Fatalf("初始档位 = %d, 期望 0（最吃紧）", got)
+	if got := int(a.labelMode.Load()); got != modeBoth {
+		t.Fatalf("初始档位 = %d, 期望 %d（两个）", got, modeBoth)
 	}
 
 	tt := ui.NewTester(a.view, 360, 520)
@@ -532,10 +532,9 @@ func TestAcceptPanelSwitchesLabelMode(t *testing.T) {
 		text string
 		want int
 	}{
-		{"每周", 3},
-		{"5 小时", 2},
-		{"两个", 1},
-		{"最吃紧", 0},
+		{"每周", modeWeekly},
+		{"5 小时", modeSession},
+		{"两个", modeBoth},
 	} {
 		if err := tt.Click(target.text); err != nil {
 			t.Fatalf("点不到 %q：%v", target.text, err)
@@ -640,11 +639,14 @@ func TestAcceptPanelHasOneOfEachControl(t *testing.T) {
 			t.Errorf("「%s」出现了 %d 次，期望 1 次", want, got)
 		}
 	}
-	// 四档显示各出现一次。
+	// 每档显示各出现一次，删掉的「最吃紧」不能再出现。
 	for _, mode := range labelModes {
 		if got := counts[mode]; got != 1 {
 			t.Errorf("档位「%s」出现了 %d 次，期望 1 次", mode, got)
 		}
+	}
+	if got := counts["最吃紧"]; got != 0 {
+		t.Errorf("「最吃紧」档已经删了，面板上却出现了 %d 次", got)
 	}
 }
 

@@ -234,30 +234,32 @@ func TestMenuBarTitle(t *testing.T) {
 		mode int
 		want string
 	}{
-		{0, "59%"},    // 最吃紧
-		{1, "0%·59%"}, // 两个
-		{2, "0%"},     // 5 小时
-		{3, "59%"},    // 每周
+		{modeBoth, "0%·59%"},
+		{modeSession, "0%"},
+		{modeWeekly, "59%"},
 	}
 	for _, c := range cases {
 		if got := menuBarTitle(acc, c.mode); got != c.want {
 			t.Errorf("menuBarTitle(mode=%d) = %q, 期望 %q", c.mode, got, c.want)
 		}
 	}
-	if got := menuBarTitle(nil, 0); got != "" {
+	if got := menuBarTitle(nil, modeBoth); got != "" {
 		t.Errorf("没有账号时应当是空串，得到 %q", got)
 	}
 }
 
 func TestGaugeFraction(t *testing.T) {
 	acc := &accountQuota{Windows: []quotaWindow{{Name: "5 hours", Used: 20}, {Name: "7 days", Used: 80}}}
-	if got := gaugeFraction(acc, 2); got != 0.2 {
+	if got := gaugeFraction(acc, modeSession); got != 0.2 {
 		t.Errorf("5 小时档 = %v, 期望 0.2", got)
 	}
-	if got := gaugeFraction(acc, 0); got != 0.8 {
-		t.Errorf("最吃紧档 = %v, 期望 0.8", got)
+	if got := gaugeFraction(acc, modeWeekly); got != 0.8 {
+		t.Errorf("每周档 = %v, 期望 0.8", got)
 	}
-	if got := gaugeFraction(nil, 0); got != 0 {
+	if got := gaugeFraction(acc, modeBoth); got != 0.8 {
+		t.Errorf("两个档应当取用得多的那条 = %v, 期望 0.8", got)
+	}
+	if got := gaugeFraction(nil, modeBoth); got != 0 {
 		t.Errorf("没有账号时 = %v, 期望 0", got)
 	}
 }
