@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -263,15 +265,44 @@ func TestGaugeFraction(t *testing.T) {
 	}
 }
 
-func TestGaugeIcon(t *testing.T) {
-	icon := gaugeIcon(0.5)
+func TestTigerIcon(t *testing.T) {
+	icon := tigerIcon(0.5)
 	if len(icon) == 0 || string(icon[1:4]) != "PNG" {
 		t.Fatal("图标没有生成成 PNG")
 	}
 	for _, f := range []float64{0, 0.25, 1, 2, -1} {
-		if len(gaugeIcon(f)) == 0 {
+		if len(tigerIcon(f)) == 0 {
 			t.Errorf("fraction=%v 时图标生成失败", f)
 		}
+	}
+}
+
+// TestTigerIconFills 用得越多，老虎头里不透明的像素越多；花纹始终镂空。
+func TestTigerIconFills(t *testing.T) {
+	solid := func(f float64) int {
+		img, err := png.Decode(bytes.NewReader(tigerIcon(f)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if _, _, _, a := img.At(x, y).RGBA(); a > 0xF000 {
+					n++
+				}
+			}
+		}
+		return n
+	}
+	empty, half, full := solid(0), solid(0.5), solid(1)
+	if !(empty < half && half < full) {
+		t.Errorf("不透明像素应随用量增加：0%%=%d 50%%=%d 100%%=%d", empty, half, full)
+	}
+	// 正中额头那道纹在满格时也得是透明的。
+	img, _ := png.Decode(bytes.NewReader(tigerIcon(1)))
+	if _, _, _, a := img.At(16, 7).RGBA(); a != 0 {
+		t.Errorf("额头花纹没有镂空，alpha=%d", a)
 	}
 }
 

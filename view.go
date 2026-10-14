@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -50,7 +51,8 @@ func (a *app) header(c *ui.Context, t *ui.Theme, accounts []accountQuota, now ti
 		}
 	}
 
-	ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14).Children(func() {
+	ui.Row(c).Gap(10).AlignItems(ui.Center).Padding(14).Children(func() {
+		ui.Image(c, tigerBadge).Width(30).Height(30).Shrink(0)
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, "Claude 套餐额度").FontSize(15).Bold()
 			// 副标题整行灰色，不用徽章：标题下面只是一句说明。
@@ -71,8 +73,8 @@ const (
 	barWidth      float32 = 166
 	percentWidth  float32 = 40
 	countdownWide float32 = 80
-	// 进度条比默认的 8 点细一些，颜色留给右边的百分比去说话。
-	meterHeight float32 = 5
+	// 进度条要粗到看得清虎纹，颜色深浅仍交给右边的百分比去说话。
+	meterHeight float32 = 8
 )
 
 // accountSection 画一个账号，压到最省地方：
@@ -130,6 +132,7 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 				ui.Meter(c, w.Used, 0, 100, meterLevels).
 					Width(barWidth).
 					Height(meterHeight).
+					Draw(tigerBar(t, w.Used, w.Level)).
 					Label(fmt.Sprintf("%s %s %.0f%%", acc.Email, w.title(), w.Used))
 				ui.Text(c, fmt.Sprintf("%.0f%%", w.Used)).
 					Width(percentWidth).TextAlign(ui.End).
@@ -351,3 +354,48 @@ func levelColor(t *ui.Theme, l level) ui.Color {
 }
 
 var meterLevels = &ui.MeterLevels{Warning: 75, Critical: 90}
+
+// tigerBadge 是标题旁的彩色老虎头，按 3 倍画，Retina 下也不糊。
+var tigerBadge = ui.NewBitmap(tigerFace(96))
+
+// 进度条的颜色：平时是虎皮橙，快满了转深橙，满了转红。
+var (
+	barOrange = ui.RGB(0xF5, 0x9A, 0x2E)
+	barAmber  = ui.RGB(0xE8, 0x6E, 0x1C)
+	barRed    = ui.RGB(0xE0, 0x45, 0x3A)
+	barInk    = ui.RGBA(0x2B, 0x1A, 0x10, 0.82)
+)
+
+// tigerBar 替换 Meter 自带的纯色填充：已用的部分画成虎皮，
+// 一道道上宽下窄、长短交替的斜黑纹。轨道和可访问信息仍是 Meter 的。
+func tigerBar(t *ui.Theme, used float64, l level) func(p *ui.Painter, r ui.Rect) {
+	fill := barOrange
+	switch l {
+	case levelWarning:
+		fill = barAmber
+	case levelCritical, levelExceeded:
+		fill = barRed
+	}
+	frac := float32(math.Min(1, math.Max(0, used/100)))
+	return func(p *ui.Painter, r ui.Rect) {
+		rad := r.H / 2
+		filled := ui.Rect{X: r.X, Y: r.Y, W: r.W * frac, H: r.H}
+		if filled.W <= 0 {
+			return
+		}
+		p.Clip(filled, rad, func() {
+			p.Fill(filled, fill, 0)
+			const gap = 7
+			for i, x := 0, r.X+4; x < filled.X+filled.W+gap; i, x = i+1, x+gap {
+				// 长短交替，像虎皮上不齐的纹路。
+				depth := r.H
+				if i%2 == 1 {
+					depth = r.H * 0.6
+				}
+				path := &ui.Path{}
+				path.MoveTo(x-1.5, r.Y).LineTo(x+1.5, r.Y).LineTo(x+2.2, r.Y+depth).LineTo(x+1.2, r.Y+depth).Close()
+				p.FillPath(path, barInk)
+			}
+		})
+	}
+}
