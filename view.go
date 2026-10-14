@@ -53,9 +53,10 @@ func (a *app) header(c *ui.Context, t *ui.Theme, accounts []accountQuota, now ti
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(14).Children(func() {
 		ui.Column(c).Grow(1).Gap(2).Children(func() {
 			ui.Text(c, "Claude 套餐额度").FontSize(15).Bold()
-			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-				ui.Badge(c, fmt.Sprintf("%d 个账号", len(accounts)))
-				ui.Text(c, "数据 "+ageText(newest, now)).FontSize(11).TextColor(t.TextMuted)
+			// 副标题整行灰色，不用徽章：标题下面只是一句说明。
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, fmt.Sprintf("%d 个账号", len(accounts))).FontSize(11).TextColor(t.TextMuted)
+				ui.Text(c, "· 数据 "+ageText(newest, now)).FontSize(11).TextColor(t.TextMuted)
 			})
 		})
 		if ui.Button(c, "刷新").Clicked() {
@@ -70,6 +71,8 @@ const (
 	barWidth      float32 = 166
 	percentWidth  float32 = 40
 	countdownWide float32 = 80
+	// 进度条比默认的 8 点细一些，颜色留给右边的百分比去说话。
+	meterHeight float32 = 5
 )
 
 // accountSection 画一个账号，压到最省地方：
@@ -77,7 +80,12 @@ const (
 func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now time.Time) {
 	dim := acc.stale(now)
 
-	ui.Column(c).Padding(0, 14).Gap(3).Children(func() {
+	section := ui.Column(c).Padding(0, 14).Gap(3)
+	// 本周用尽的账号整块变淡：还在列表里，但一眼看出暂时用不上。
+	if acc.isWeeklyFull() {
+		section.Opacity(0.55)
+	}
+	section.Children(func() {
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			emailColor := t.Text
 			if dim {
@@ -88,7 +96,10 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 				ui.Badge(c, acc.Plan)
 			}
 			if !acc.ServedAt.IsZero() && now.Sub(acc.ServedAt) < 30*time.Minute {
-				ui.Badge(c, "正在使用")
+				// 唯一带颜色的徽章，其余账号信息一律灰色。
+				ui.Badge(c, "● 正在使用").
+					Background(t.Success.Alpha(0.14)).
+					TextColor(t.Success)
 			}
 			ui.Spacer(c)
 			ui.Text(c, ageTextShort(acc.ReadAt, now)).FontSize(10).TextColor(t.TextMuted)
@@ -101,6 +112,7 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 				ui.Text(c, label).Width(labelWidth).FontSize(10).TextColor(t.TextMuted)
 				ui.Meter(c, w.Used, 0, 100, meterLevels).
 					Width(barWidth).
+					Height(meterHeight).
 					Label(fmt.Sprintf("%s %s %.0f%%", acc.Email, w.title(), w.Used))
 				ui.Text(c, fmt.Sprintf("%.0f%%", w.Used)).
 					Width(percentWidth).TextAlign(ui.End).
