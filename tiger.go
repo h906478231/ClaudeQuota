@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"log"
 	"math"
@@ -136,17 +137,64 @@ var (
 	tigerInk    = color.NRGBA{R: 0x2B, G: 0x1A, B: 0x10, A: 0xFF}
 )
 
+// tigerColor 是彩色头像里每一块的颜色。
+func tigerColor(part tigerPart) color.NRGBA {
+	switch part {
+	case tigerCream:
+		return tigerCreamC
+	case tigerStripe:
+		return tigerInk
+	}
+	return tigerOrange
+}
+
 // tigerFace 是彩色头像，给面板标题旁边用。
 func tigerFace(size int) *image.NRGBA {
 	return rasterTiger(size, func(part tigerPart, _ float64) color.NRGBA {
-		switch part {
-		case tigerCream:
-			return tigerCreamC
-		case tigerStripe:
-			return tigerInk
-		}
-		return tigerOrange
+		return tigerColor(part)
 	})
+}
+
+// dockIconSize 是 Dock 图标的边长。Dock 放大到最大也就 256pt，
+// Retina 下 512 像素够用，再大只是白白多算。
+const dockIconSize = 512
+
+// tigerDockIcon 是 Dock 里的彩色老虎头，和菜单栏一样当量杯用：
+// 用掉的部分从下往上是原色，没用到的部分褪成淡灰，一眼看得出还剩多少。
+// 四周留出约一成的边，和别的 Dock 图标一般大。
+func tigerDockIcon(fraction float64) []byte {
+	return encodePNG(colorTiger(dockIconSize, fraction))
+}
+
+// tigerAppIcon 是打包进 .app 的静态图标，Finder 和启动台里看到的就是它：
+// 没有用量可言，就是满色的老虎头。仓库里的 icon.png 由它生成，
+// 见 TestAppIconUpToDate。
+func tigerAppIcon() []byte {
+	return encodePNG(colorTiger(1024, 1))
+}
+
+// colorTiger 把彩色头像画在 size 见方、四周留边的透明画布中间，
+// fraction 以上的部分褪色。
+func colorTiger(size int, fraction float64) *image.NRGBA {
+	level := tigerBottom - (tigerBottom-tigerTop)*math.Min(1, math.Max(0, fraction))
+	inner := size * 13 / 16
+	face := rasterTiger(inner, func(part tigerPart, y float64) color.NRGBA {
+		c := tigerColor(part)
+		if y < level {
+			c = faded(c)
+		}
+		return c
+	})
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
+	off := (size - inner) / 2
+	draw.Draw(img, face.Bounds().Add(image.Pt(off, off)), face, image.Point{}, draw.Src)
+	return img
+}
+
+// faded 把颜色褪成同样明暗的灰，再调淡一些：深浅色 Dock 上都还看得见轮廓。
+func faded(c color.NRGBA) color.NRGBA {
+	g := uint8((299*int(c.R) + 587*int(c.G) + 114*int(c.B)) / 1000)
+	return color.NRGBA{R: g, G: g, B: g, A: c.A / 2}
 }
 
 func encodePNG(img image.Image) []byte {
