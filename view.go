@@ -91,7 +91,8 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 			if dim {
 				emailColor = t.TextMuted
 			}
-			ui.Text(c, acc.Email).FontSize(12).Bold().TextColor(emailColor)
+			// 邮箱太长时省略号截断，给右边的「同步」让位。
+			ui.Text(c, acc.Email).FontSize(12).Bold().TextColor(emailColor).SingleLine().Shrink(1).MinWidth(0)
 			if acc.Plan != "" {
 				ui.Badge(c, acc.Plan)
 			}
@@ -102,8 +103,24 @@ func (a *app) accountSection(c *ui.Context, t *ui.Theme, acc accountQuota, now t
 					TextColor(t.Success)
 			}
 			ui.Spacer(c)
-			ui.Text(c, ageTextShort(acc.ReadAt, now)).FontSize(10).TextColor(t.TextMuted)
+			if a.syncing(acc.Email) {
+				ui.Spinner(c).Label("正在同步 " + acc.Email)
+				ui.Text(c, "同步中").FontSize(10).TextColor(t.TextMuted)
+				return
+			}
+			ui.Text(c, ageTextShort(acc.ReadAt, now)).FontSize(10).TextColor(t.TextMuted).Shrink(0)
+			// 和顶部「刷新」不同：这个是真的让 magpie 去问一次这个账号。
+			email := acc.Email
+			if ui.Button(c, "同步").FontSize(10).Padding(1, 6).Shrink(0).
+				Label("同步 " + email).
+				Tooltip("让 magpie 立即重新读取这个账号的额度").
+				Clicked() {
+				go a.syncAccount(email)
+			}
 		})
+		if msg := a.syncError(acc.Email); msg != "" {
+			ui.Text(c, "同步失败："+msg).FontSize(10).TextColor(t.Warning)
+		}
 
 		for _, item := range acc.Windows {
 			w := item
@@ -205,7 +222,7 @@ func (a *app) footer(c *ui.Context, t *ui.Theme, accounts []accountQuota) {
 			ui.Button(c, "退出").OnClick(mygo.App.Quit)
 		})
 
-		ui.Text(c, "数据来自 magpie 的本地文件，不碰登录凭据。").
+		ui.Text(c, "「刷新」只重读本地文件，「同步」让 magpie 立即去问一次。").
 			FontSize(9).TextColor(t.TextMuted)
 	})
 }

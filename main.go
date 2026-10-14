@@ -52,6 +52,8 @@ type app struct {
 	mu       sync.Mutex
 	accounts []accountQuota
 	failed   string
+	syncBusy map[string]bool   // 正在单独同步的账号
+	syncErrs map[string]string // 账号上一次同步失败的原因
 
 	// 界面控件直接绑的是下面这几个字段，只在主线程动；
 	// 带原子量的是给托盘 goroutine 读的镜像，两边必须一起改。
