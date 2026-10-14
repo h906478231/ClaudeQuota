@@ -23,7 +23,14 @@ var intervalChoices = []struct {
 	{"1 分钟", 60},
 }
 
-var labelModes = []string{"最吃紧", "两个", "5 小时", "每周"}
+// 菜单栏显示的几档，和 labelModes 一一对应；默认是 modeBoth。
+const (
+	modeBoth    = iota // 5 小时和每周都摆出来
+	modeSession        // 只看 5 小时
+	modeWeekly         // 只看每周
+)
+
+var labelModes = []string{"两个", "5 小时", "每周"}
 
 // currentChoice 是账号选择的特殊档，跟着「最近在用」的账号走，
 // 也就是你正在用的那个；>= 0 时是 accounts 里的具体下标。
@@ -64,15 +71,15 @@ type app struct {
 	dockBadge string
 }
 
-// newApp 建一个带默认值的 app：默认盯当前使用的账号、每 5 秒读一次。
+// newApp 建一个带默认值的 app：默认盯当前使用的账号、菜单栏显示「两个」、每 5 秒读一次。
 // 默认值集中在这里，别散落在 main 里，否则换个入口构造就会走样。
 func newApp() *app {
 	a := &app{
-		labelModeValue:   0,
+		labelModeValue:   modeBoth,
 		menuAccountValue: currentLabel,
 		intervalValue:    intervalChoices[1].Label,
 	}
-	a.labelMode.Store(0)
+	a.labelMode.Store(modeBoth)
 	a.menuAccount.Store(currentChoice)
 	a.intervalIdx.Store(1)
 	a.dockShown.Store(true)
@@ -475,25 +482,24 @@ func menuBarTitle(acc *accountQuota, mode int) string {
 		return ""
 	}
 	switch mode {
-	case 1:
-		return fmt.Sprintf("%s·%s", percentText(acc.session()), percentText(acc.weekly()))
-	case 2:
+	case modeSession:
 		return percentText(acc.session())
-	case 3:
+	case modeWeekly:
 		return percentText(acc.weekly())
 	}
-	return percentText(acc.mostUsed())
+	return fmt.Sprintf("%s·%s", percentText(acc.session()), percentText(acc.weekly()))
 }
 
+// gaugeFraction 是老虎头灌到的比例。「两个」档只能灌一个水位，取用得多的那条。
 func gaugeFraction(acc *accountQuota, mode int) float64 {
 	if acc == nil {
 		return 0
 	}
 	var w *quotaWindow
 	switch mode {
-	case 2:
+	case modeSession:
 		w = acc.session()
-	case 3:
+	case modeWeekly:
 		w = acc.weekly()
 	default:
 		w = acc.mostUsed()
